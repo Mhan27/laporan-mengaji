@@ -167,7 +167,7 @@ tr:hover td { background: #fafaf8; }
     <div class="fg"><label>Password</label><input type="password" id="loginPass" placeholder="Password" autocomplete="current-password"></div>
     <button class="btn-main" onclick="doLogin()">Masuk</button>
     <div class="auth-err" id="loginErr"></div>
-    </div>
+
   </div>
 </div>
 
@@ -318,43 +318,83 @@ tr:hover td { background: #fafaf8; }
   </div>
 </div>
 
-<script>
-const USERS_KEY = 'mj_users', SES_KEY = 'mj_ses';
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, set, get, remove, onValue, child }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyARSJNnY-NVtFR8ff5NrETSRhvJQp_EQS4",
+  authDomain: "laporan-mengajim7.firebaseapp.com",
+  databaseURL: "https://laporan-mengajim7-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "laporan-mengajim7",
+  storageBucket: "laporan-mengajim7.firebasestorage.app",
+  messagingSenderId: "1612707971",
+  appId: "1:1612707971:web:d75e50847524938a3403b6"
+};
+const app = initializeApp(firebaseConfig);
+const db  = getDatabase(app);
+
 const ADMIN_USER = 'admin', ADMIN_PASS = 'admin123';
+const SES_KEY = 'mj_ses';
 let me = null, halanganOn = false;
+let localUsers = {};   // cache Firebase data in memory
+
+/* ======== LOADING OVERLAY ======== */
+function showLoading(msg='Memuat...') {
+  let el = document.getElementById('loadingOverlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'loadingOverlay';
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:12px;';
+    el.innerHTML = '<div style="width:36px;height:36px;border:3px solid #E1F5EE;border-top-color:#1D9E75;border-radius:50%;animation:spin .7s linear infinite;"></div><div style="font-size:.9rem;color:#085041;font-weight:600;">'+msg+'</div>';
+    const style = document.createElement('style');
+    style.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(style);
+    document.body.appendChild(el);
+  } else {
+    el.style.display = 'flex';
+    el.querySelector('div:last-child').textContent = msg;
+  }
+}
+function hideLoading() {
+  const el = document.getElementById('loadingOverlay');
+  if (el) el.style.display = 'none';
+}
 
 /* ======== AUTH ======== */
-function getUsers() {
-  let u = JSON.parse(localStorage.getItem(USERS_KEY) || '{}');
-  if (!u['guru']) { u['guru'] = { nama: 'Ustadz/ah', password: 'mengaji123', data: [], role: 'guru' }; saveUsers(u); }
-  return u;
-}
-function saveUsers(u) { localStorage.setItem(USERS_KEY, JSON.stringify(u)); }
-
 function showLogin() {
   document.getElementById('loginPage').style.display = 'flex';
   document.getElementById('loginErr').textContent = '';
 }
 
-function doLogin() {
-  const u = document.getElementById('loginUser').value.trim();
+async function doLogin() {
+  const u = document.getElementById('loginUser').value.trim().toLowerCase();
   const p = document.getElementById('loginPass').value;
   const err = document.getElementById('loginErr');
   if (!u || !p) { err.textContent = 'Username dan password wajib diisi.'; return; }
 
-  // cek admin
   if (u === ADMIN_USER && p === ADMIN_PASS) {
-    me = ADMIN_USER; localStorage.setItem(SES_KEY, ADMIN_USER); enterAdmin(); return;
+    me = ADMIN_USER; localStorage.setItem(SES_KEY, ADMIN_USER);
+    await loadAllUsers(); enterAdmin(); return;
   }
 
-  const users = getUsers();
-  if (!users[u] || users[u].password !== p) { err.textContent = 'Username atau password salah.'; return; }
-  me = u; localStorage.setItem(SES_KEY, u); enterGuru();
+  showLoading('Memeriksa akun...');
+  try {
+    const snap = await get(ref(db, `users/${u}`));
+    if (!snap.exists() || snap.val().password !== p) {
+      err.textContent = 'Username atau password salah.'; hideLoading(); return;
+    }
+    localUsers[u] = snap.val();
+    me = u; localStorage.setItem(SES_KEY, u);
+    hideLoading(); enterGuru();
+  } catch(e) {
+    hideLoading(); err.textContent = 'Gagal terhubung ke server. Cek koneksi internet.';
+  }
 }
 
-
 function doLogout() {
-  localStorage.removeItem(SES_KEY); me = null;
+  localStorage.removeItem(SES_KEY); me = null; localUsers = {};
   document.getElementById('appPage').classList.remove('active');
   document.getElementById('adminPage').classList.remove('active');
   document.getElementById('loginUser').value = '';
@@ -362,12 +402,21 @@ function doLogout() {
   showLogin();
 }
 
+async function loadAllUsers() {
+  showLoading('Memuat data guru...');
+  try {
+    const snap = await get(ref(db, 'users'));
+    localUsers = snap.exists() ? snap.val() : {};
+  } catch(e) { localUsers = {}; }
+  hideLoading();
+}
+
 /* ======== ENTER APP ======== */
 function enterGuru() {
   hide('loginPage');
   document.getElementById('adminPage').classList.remove('active');
   document.getElementById('appPage').classList.add('active');
-  document.getElementById('userBadge').textContent = getUsers()[me].nama;
+  document.getElementById('userBadge').textContent = localUsers[me]?.nama || me;
   document.getElementById('inpTgl').value = today();
   halanganOn = false; updateToggleUI();
   populateFilter(); renderDashboard();
@@ -384,8 +433,18 @@ function enterAdmin() {
 }
 
 /* ======== GURU DATA ======== */
-function getData() { return getUsers()[me]?.data || []; }
-function saveData(d) { const u = getUsers(); u[me].data = d; saveUsers(u); }
+function getData() {
+  const raw = localUsers[me]?.data;
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  return Object.values(raw);
+}
+
+async function saveData(data) {
+  localUsers[me].data = data;
+  await set(ref(db, `users/${me}/data`), data);
+}
+
 function today() { return new Date().toISOString().split('T')[0]; }
 
 /* ======== TOGGLE ======== */
@@ -397,23 +456,27 @@ function updateToggleUI() {
 }
 
 /* ======== SIMPAN ======== */
-function simpan() {
+async function simpan() {
   const tgl = document.getElementById('inpTgl').value;
   const surah = document.getElementById('inpSurah').value.trim();
   const msg = document.getElementById('msgSimpan');
   if (!tgl) { msg.style.color='var(--red)'; msg.textContent='⚠️ Pilih tanggal.'; return; }
   if (!surah && !halanganOn) { msg.style.color='var(--red)'; msg.textContent='⚠️ Isi surah atau aktifkan halangan.'; return; }
+
+  showLoading('Menyimpan laporan...');
   const data = getData();
   const idx = data.findIndex(d => d.tanggal === tgl);
   const entry = { id: idx >= 0 ? data[idx].id : Date.now(), tanggal: tgl, surah: surah || '-', halangan: halanganOn };
   if (idx >= 0) data[idx] = entry; else data.unshift(entry);
   data.sort((a,b) => b.tanggal.localeCompare(a.tanggal));
-  saveData(data);
+  await saveData(data);
+  hideLoading();
   msg.style.color='var(--green)'; msg.textContent='✅ Laporan tersimpan!';
   document.getElementById('inpSurah').value = '';
   halanganOn = false; updateToggleUI();
   document.getElementById('inpTgl').value = today();
   setTimeout(() => msg.textContent = '', 2500);
+  renderDashboard();
 }
 
 /* ======== DASHBOARD GURU ======== */
@@ -465,17 +528,21 @@ function renderRiwayat() {
     <td><button class="btn-del" onclick="hapus(${d.id})">✕</button></td>
   </tr>`).join('');
 }
-function hapus(id) {
+async function hapus(id) {
   if (!confirm('Hapus laporan ini?')) return;
-  saveData(getData().filter(d => d.id !== id));
+  showLoading('Menghapus...');
+  await saveData(getData().filter(d => d.id !== id));
+  hideLoading();
   populateFilter(); renderRiwayat(); renderDashboard();
 }
 
 /* ======== ADMIN FILTER ======== */
 function populateAdminFilter() {
-  const users = getUsers();
   const allMonths = new Set();
-  Object.values(users).forEach(u => { if (u.role !== 'admin') u.data.forEach(d => allMonths.add(d.tanggal.slice(0,7))); });
+  Object.values(localUsers).forEach(u => {
+    const data = u.data ? (Array.isArray(u.data) ? u.data : Object.values(u.data)) : [];
+    data.forEach(d => allMonths.add(d.tanggal.slice(0,7)));
+  });
   const sorted = [...allMonths].sort().reverse();
   const sel = document.getElementById('adminFilterBulan');
   sel.innerHTML = '<option value="">-- Pilih Bulan --</option>';
@@ -486,14 +553,17 @@ function populateAdminFilter() {
 }
 
 /* ======== ADMIN REKAP ======== */
+function getGuruData(u) {
+  if (!u.data) return [];
+  return Array.isArray(u.data) ? u.data : Object.values(u.data);
+}
+
 function renderAdminRekap() {
   const bulan = document.getElementById('adminFilterBulan').value;
-  const users = getUsers();
   const wrap = document.getElementById('adminRekap');
   const statsEl = document.getElementById('adminStats');
 
-  const guruList = Object.entries(users)
-    .filter(([k]) => k !== ADMIN_USER)
+  const guruList = Object.entries(localUsers)
     .sort((a,b) => a[1].nama.localeCompare(b[1].nama));
 
   if (!bulan) {
@@ -502,10 +572,9 @@ function renderAdminRekap() {
     return;
   }
 
-  // hitung stats global bulan ini
-  let totalGuru = guruList.length, totalLaporan = 0, totalHalangan = 0;
+  let totalLaporan = 0, totalHalangan = 0;
   guruList.forEach(([,u]) => {
-    const bData = u.data.filter(d => d.tanggal.startsWith(bulan));
+    const bData = getGuruData(u).filter(d => d.tanggal.startsWith(bulan));
     totalLaporan += bData.length;
     totalHalangan += bData.filter(d => d.halangan).length;
   });
@@ -514,7 +583,7 @@ function renderAdminRekap() {
 
   statsEl.style.display = 'grid';
   statsEl.innerHTML = `
-    <div class="admin-stat"><div class="lbl">Jumlah Guru</div><div class="val">${totalGuru}</div><div class="sub">terdaftar</div></div>
+    <div class="admin-stat"><div class="lbl">Jumlah Guru</div><div class="val">${guruList.length}</div><div class="sub">terdaftar</div></div>
     <div class="admin-stat"><div class="lbl">Total Laporan</div><div class="val">${totalLaporan}</div><div class="sub">${namabulan}</div></div>
     <div class="admin-stat"><div class="lbl">Hari Mengaji</div><div class="val" style="color:var(--green-dark)">${totalLaporan-totalHalangan}</div><div class="sub">tanpa halangan</div></div>
     <div class="admin-stat"><div class="lbl">Hari Halangan</div><div class="val" style="color:var(--red)">${totalHalangan}</div><div class="sub">ada halangan</div></div>
@@ -523,7 +592,7 @@ function renderAdminRekap() {
   if (!guruList.length) { wrap.innerHTML='<div class="empty"><div class="icon">👥</div><p>Belum ada guru terdaftar.</p></div>'; return; }
 
   wrap.innerHTML = guruList.map(([uid, u], idx) => {
-    const bData = u.data.filter(d => d.tanggal.startsWith(bulan)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
+    const bData = getGuruData(u).filter(d => d.tanggal.startsWith(bulan)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
     const jMengaji = bData.filter(d => !d.halangan).length;
     const jHalangan = bData.filter(d => d.halangan).length;
     const rows = bData.length ? bData.map(d => `<tr>
@@ -561,7 +630,7 @@ function toggleGuru(bodyId, chevId) {
 }
 
 /* ======== KELOLA GURU ======== */
-function tambahGuru() {
+async function tambahGuru() {
   const nama = document.getElementById('addNama').value.trim();
   const u = document.getElementById('addUser').value.trim().toLowerCase();
   const p = document.getElementById('addPass').value;
@@ -569,36 +638,50 @@ function tambahGuru() {
   if (!nama || !u || !p) { msg.style.color='var(--red)'; msg.textContent='⚠️ Semua field wajib diisi.'; return; }
   if (p.length < 6) { msg.style.color='var(--red)'; msg.textContent='⚠️ Password minimal 6 karakter.'; return; }
   if (u === ADMIN_USER) { msg.style.color='var(--red)'; msg.textContent='⚠️ Username tidak boleh digunakan.'; return; }
-  const users = getUsers();
-  if (users[u]) { msg.style.color='var(--red)'; msg.textContent='⚠️ Username sudah digunakan.'; return; }
-  users[u] = { nama, password: p, data: [], role: 'guru' }; saveUsers(users);
-  msg.style.color='var(--green)'; msg.textContent=`✅ Akun "${nama}" berhasil ditambahkan.`;
-  document.getElementById('addNama').value='';
-  document.getElementById('addUser').value='';
-  document.getElementById('addPass').value='';
-  setTimeout(()=>msg.textContent='', 3000);
-  renderKelolaGuru(); populateAdminFilter();
+  if (localUsers[u]) { msg.style.color='var(--red)'; msg.textContent='⚠️ Username sudah digunakan.'; return; }
+
+  showLoading('Menambahkan guru...');
+  try {
+    const newGuru = { nama, password: p, data: [], role: 'guru' };
+    await set(ref(db, `users/${u}`), newGuru);
+    localUsers[u] = newGuru;
+    msg.style.color='var(--green)'; msg.textContent=`✅ Akun "${nama}" berhasil ditambahkan.`;
+    document.getElementById('addNama').value='';
+    document.getElementById('addUser').value='';
+    document.getElementById('addPass').value='';
+    setTimeout(()=>msg.textContent='', 3000);
+    renderKelolaGuru(); populateAdminFilter();
+  } catch(e) {
+    msg.style.color='var(--red)'; msg.textContent='⚠️ Gagal menyimpan. Cek koneksi internet.';
+  }
+  hideLoading();
 }
 
 function renderKelolaGuru() {
-  const users = getUsers();
-  const guruList = Object.entries(users).filter(([k]) => k !== ADMIN_USER).sort((a,b)=>a[1].nama.localeCompare(b[1].nama));
+  const guruList = Object.entries(localUsers).sort((a,b)=>a[1].nama.localeCompare(b[1].nama));
   const el = document.getElementById('guruListAdmin');
   if (!guruList.length) { el.innerHTML='<div class="empty"><div class="icon">👥</div><p>Belum ada guru terdaftar.</p></div>'; return; }
-  el.innerHTML = guruList.map(([uid,u]) => `
-    <div class="guru-list-item">
+  el.innerHTML = guruList.map(([uid,u]) => {
+    const jData = getGuruData(u).length;
+    return `<div class="guru-list-item">
       <div>
         <div class="guru-list-name">${u.nama}</div>
-        <div class="guru-list-user">@${uid} &nbsp;·&nbsp; ${u.data.length} laporan</div>
+        <div class="guru-list-user">@${uid} &nbsp;·&nbsp; ${jData} laporan</div>
       </div>
       <button class="btn-del" onclick="hapusGuru('${uid}')" title="Hapus akun guru">🗑️</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
-function hapusGuru(uid) {
-  if (!confirm(`Hapus akun guru "${getUsers()[uid]?.nama}"? Semua datanya akan hilang.`)) return;
-  const users = getUsers(); delete users[uid]; saveUsers(users);
-  renderKelolaGuru(); populateAdminFilter(); renderAdminRekap();
+async function hapusGuru(uid) {
+  if (!confirm(`Hapus akun guru "${localUsers[uid]?.nama}"? Semua datanya akan hilang.`)) return;
+  showLoading('Menghapus akun...');
+  try {
+    await remove(ref(db, `users/${uid}`));
+    delete localUsers[uid];
+    renderKelolaGuru(); populateAdminFilter(); renderAdminRekap();
+  } catch(e) { alert('Gagal menghapus. Cek koneksi internet.'); }
+  hideLoading();
 }
 
 /* ======== EXPORT PDF ADMIN ======== */
@@ -607,7 +690,6 @@ function exportAdminPDF() {
   if (!bulan) { alert('Pilih bulan terlebih dahulu.'); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  const users = getUsers();
   const [y,mo] = bulan.split('-');
   const namabulan = new Date(y,mo-1).toLocaleDateString('id-ID',{month:'long',year:'numeric'});
 
@@ -618,30 +700,23 @@ function exportAdminPDF() {
   doc.text(`Dicetak: ${new Date().toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'})}`, 14, 31);
   doc.setDrawColor(200); doc.line(14,35,196,35);
 
-  const guruList = Object.entries(users)
-    .filter(([k]) => k !== ADMIN_USER)
-    .sort((a,b) => a[1].nama.localeCompare(b[1].nama));
+  const guruList = Object.entries(localUsers).sort((a,b) => a[1].nama.localeCompare(b[1].nama));
 
   let y2 = 43;
   guruList.forEach(([uid, u]) => {
-    const bData = u.data.filter(d => d.tanggal.startsWith(bulan)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
+    const bData = getGuruData(u).filter(d => d.tanggal.startsWith(bulan)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
     const jMengaji = bData.filter(d=>!d.halangan).length;
     const jHalangan = bData.filter(d=>d.halangan).length;
-
     if (y2 > 260) { doc.addPage(); y2 = 14; }
-
-    // nama guru
     doc.setFontSize(10); doc.setTextColor(83,74,183);
     doc.text(`${u.nama}  (@${uid})`, 14, y2);
     doc.setFontSize(8); doc.setTextColor(136,135,128);
     doc.text(`Mengaji: ${jMengaji} hari   Halangan: ${jHalangan} hari   Total: ${bData.length} laporan`, 14, y2+5);
     y2 += 11;
-
     if (!bData.length) {
       doc.setFontSize(8); doc.setTextColor(180,180,175);
       doc.text('Belum ada laporan bulan ini.', 18, y2); y2 += 8;
     } else {
-      // header kolom
       doc.setFontSize(7.5); doc.setTextColor(136,135,128);
       doc.text('Tanggal', 18, y2); doc.text('Surah', 60, y2); doc.text('Status', 160, y2);
       doc.setDrawColor(220); doc.line(14,y2+2,196,y2+2); y2+=7;
@@ -654,21 +729,18 @@ function exportAdminPDF() {
         y2 += 6.5;
       });
     }
-    // garis pemisah antar guru
     doc.setDrawColor(235); doc.line(14,y2+1,196,y2+1); y2+=6;
   });
 
-  // ringkasan bawah
   let totalMengaji=0, totalHalangan=0;
   guruList.forEach(([,u]) => {
-    const bd = u.data.filter(d=>d.tanggal.startsWith(bulan));
+    const bd = getGuruData(u).filter(d=>d.tanggal.startsWith(bulan));
     totalMengaji += bd.filter(d=>!d.halangan).length;
     totalHalangan += bd.filter(d=>d.halangan).length;
   });
   if (y2 > 268) { doc.addPage(); y2=14; }
   doc.setFontSize(9); doc.setTextColor(83,74,183);
   doc.text(`Ringkasan: ${guruList.length} guru  |  ${totalMengaji} hari mengaji  |  ${totalHalangan} hari halangan`, 14, y2+4);
-
   doc.save(`rekap-mengaji-admin-${bulan}.pdf`);
 }
 
@@ -695,12 +767,43 @@ function show(id) { document.getElementById(id).style.display='flex'; }
 function hide(id) { document.getElementById(id).style.display='none'; }
 
 /* ======== INIT ======== */
-window.addEventListener('DOMContentLoaded', () => {
-  const s = localStorage.getItem(SES_KEY);
-  if (s === ADMIN_USER) { me = ADMIN_USER; enterAdmin(); return; }
-  if (s && getUsers()[s]) { me = s; enterGuru(); return; }
-  showLogin();
+window.addEventListener('DOMContentLoaded', async () => {
+  // expose functions to global scope (needed since type=module)
+  window.doLogin = doLogin;
+  window.doLogout = doLogout;
+  window.toggleHalangan = toggleHalangan;
+  window.simpan = simpan;
+  window.hapus = hapus;
+  window.goTab = goTab;
+  window.goAdminTab = goAdminTab;
+  window.renderAdminRekap = renderAdminRekap;
+  window.renderRiwayat = renderRiwayat;
+  window.exportAdminPDF = exportAdminPDF;
+  window.tambahGuru = tambahGuru;
+  window.hapusGuru = hapusGuru;
+  window.renderKelolaGuru = renderKelolaGuru;
+  window.toggleGuru = toggleGuru;
+
   document.getElementById('loginPass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+
+  const s = localStorage.getItem(SES_KEY);
+  if (s === ADMIN_USER) {
+    me = ADMIN_USER;
+    await loadAllUsers();
+    enterAdmin(); return;
+  }
+  if (s) {
+    showLoading('Memuat sesi...');
+    try {
+      const snap = await get(ref(db, `users/${s}`));
+      if (snap.exists()) {
+        localUsers[s] = snap.val();
+        me = s; hideLoading(); enterGuru(); return;
+      }
+    } catch(e) {}
+    hideLoading(); localStorage.removeItem(SES_KEY);
+  }
+  showLogin();
 });
 </script>
 </body>
