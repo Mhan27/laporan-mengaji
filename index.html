@@ -270,14 +270,17 @@ tr:hover td { background: #fafaf8; }
     <!-- REKAP BULANAN -->
     <div id="atab-rekap">
       <div class="card">
-        <div class="card-title admin" style="justify-content:space-between; flex-wrap:wrap; gap:8px;">
-          <span>📊 Rekap Laporan Semua Guru</span>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <select id="adminFilterBulan" onchange="renderAdminRekap()" style="padding:6px 11px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;background:var(--gray-light);color:var(--text);outline:none;font-family:inherit;">
-              <option value="">-- Pilih Bulan --</option>
-            </select>
-            <button class="btn-export" onclick="exportAdminPDF()">⬇️ Export PDF</button>
+        <div class="card-title admin">📊 Rekap Laporan Semua Guru</div>
+        <div class="filter-row" style="flex-wrap:wrap;gap:10px;margin-bottom:1rem;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="filter-label">Dari:</span>
+            <input type="date" id="pdfDari" onchange="renderAdminRekap()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;background:var(--gray-light);color:var(--text);outline:none;font-family:inherit;">
           </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="filter-label">Sampai:</span>
+            <input type="date" id="pdfSampai" onchange="renderAdminRekap()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:0.85rem;background:var(--gray-light);color:var(--text);outline:none;font-family:inherit;">
+          </div>
+          <button class="btn-export" onclick="exportAdminPDF()">⬇️ Export PDF</button>
         </div>
         <div id="adminStats" class="admin-stats" style="display:none;"></div>
         <div id="adminRekap"></div>
@@ -538,18 +541,13 @@ async function hapus(id) {
 
 /* ======== ADMIN FILTER ======== */
 function populateAdminFilter() {
-  const allMonths = new Set();
-  Object.values(localUsers).forEach(u => {
-    const data = u.data ? (Array.isArray(u.data) ? u.data : Object.values(u.data)) : [];
-    data.forEach(d => allMonths.add(d.tanggal.slice(0,7)));
-  });
-  const sorted = [...allMonths].sort().reverse();
-  const sel = document.getElementById('adminFilterBulan');
-  sel.innerHTML = '<option value="">-- Pilih Bulan --</option>';
-  sorted.forEach(m => {
-    const [y,mo] = m.split('-');
-    sel.innerHTML += `<option value="${m}">${new Date(y,mo-1).toLocaleDateString('id-ID',{month:'long',year:'numeric'})}</option>`;
-  });
+  // set default range: 1st to last day of current month
+  const now = new Date();
+  const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0');
+  const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  document.getElementById('pdfDari').value = `${y}-${m}-01`;
+  document.getElementById('pdfSampai').value = `${y}-${m}-${String(lastDay).padStart(2,'0')}`;
+  renderAdminRekap();
 }
 
 /* ======== ADMIN REKAP ======== */
@@ -559,32 +557,32 @@ function getGuruData(u) {
 }
 
 function renderAdminRekap() {
-  const bulan = document.getElementById('adminFilterBulan').value;
+  const dari = document.getElementById('pdfDari')?.value;
+  const sampai = document.getElementById('pdfSampai')?.value;
   const wrap = document.getElementById('adminRekap');
   const statsEl = document.getElementById('adminStats');
 
   const guruList = Object.entries(localUsers)
     .sort((a,b) => a[1].nama.localeCompare(b[1].nama));
 
-  if (!bulan) {
+  if (!dari || !sampai || dari > sampai) {
     statsEl.style.display = 'none';
-    wrap.innerHTML = '<div class="empty"><div class="icon">📅</div><p>Pilih bulan dari dropdown untuk melihat rekap laporan.</p></div>';
+    wrap.innerHTML = '<div class="empty"><div class="icon">📅</div><p>Pilih rentang tanggal untuk melihat rekap laporan.</p></div>';
     return;
   }
 
   let totalLaporan = 0, totalHalangan = 0;
   guruList.forEach(([,u]) => {
-    const bData = getGuruData(u).filter(d => d.tanggal.startsWith(bulan));
+    const bData = getGuruData(u).filter(d => d.tanggal >= dari && d.tanggal <= sampai);
     totalLaporan += bData.length;
     totalHalangan += bData.filter(d => d.halangan).length;
   });
-  const [y,mo] = bulan.split('-');
-  const namabulan = new Date(y,mo-1).toLocaleDateString('id-ID',{month:'long',year:'numeric'});
 
+  const fmtRange = `${fmtTgl(dari)} – ${fmtTgl(sampai)}`;
   statsEl.style.display = 'grid';
   statsEl.innerHTML = `
     <div class="admin-stat"><div class="lbl">Jumlah Guru</div><div class="val">${guruList.length}</div><div class="sub">terdaftar</div></div>
-    <div class="admin-stat"><div class="lbl">Total Laporan</div><div class="val">${totalLaporan}</div><div class="sub">${namabulan}</div></div>
+    <div class="admin-stat"><div class="lbl">Total Laporan</div><div class="val">${totalLaporan}</div><div class="sub">${fmtRange}</div></div>
     <div class="admin-stat"><div class="lbl">Hari Mengaji</div><div class="val" style="color:var(--green-dark)">${totalLaporan-totalHalangan}</div><div class="sub">tanpa halangan</div></div>
     <div class="admin-stat"><div class="lbl">Hari Halangan</div><div class="val" style="color:var(--red)">${totalHalangan}</div><div class="sub">ada halangan</div></div>
   `;
@@ -592,7 +590,7 @@ function renderAdminRekap() {
   if (!guruList.length) { wrap.innerHTML='<div class="empty"><div class="icon">👥</div><p>Belum ada guru terdaftar.</p></div>'; return; }
 
   wrap.innerHTML = guruList.map(([uid, u], idx) => {
-    const bData = getGuruData(u).filter(d => d.tanggal.startsWith(bulan)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
+    const bData = getGuruData(u).filter(d => d.tanggal >= dari && d.tanggal <= sampai).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
     const jMengaji = bData.filter(d => !d.halangan).length;
     const jHalangan = bData.filter(d => d.halangan).length;
     const rows = bData.length ? bData.map(d => `<tr>
@@ -600,7 +598,7 @@ function renderAdminRekap() {
       <td>${d.halangan?'<em style="color:var(--text-muted)">Tidak mengaji</em>':d.surah}</td>
       <td>${d.halangan?'<span class="badge badge-red">Halangan</span>':'<span class="badge badge-green">Mengaji</span>'}</td>
     </tr>`).join('')
-    : `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);font-size:0.83rem;padding:14px;">Belum ada laporan bulan ini</td></tr>`;
+    : `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);font-size:0.83rem;padding:14px;">Belum ada laporan periode ini</td></tr>`;
 
     return `<div class="guru-section">
       <div class="guru-header" onclick="toggleGuru('gb${idx}','gc${idx}')">
@@ -686,62 +684,148 @@ async function hapusGuru(uid) {
 
 /* ======== EXPORT PDF ADMIN ======== */
 function exportAdminPDF() {
-  const bulan = document.getElementById('adminFilterBulan').value;
-  if (!bulan) { alert('Pilih bulan terlebih dahulu.'); return; }
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const [y,mo] = bulan.split('-');
-  const namabulan = new Date(y,mo-1).toLocaleDateString('id-ID',{month:'long',year:'numeric'});
+  const dari = document.getElementById('pdfDari').value;
+  const sampai = document.getElementById('pdfSampai').value;
+  if (!dari || !sampai) { alert('Pilih rentang tanggal terlebih dahulu.'); return; }
+  if (dari > sampai) { alert('Tanggal mulai tidak boleh lebih besar dari tanggal selesai.'); return; }
 
-  doc.setFontSize(15); doc.setTextColor(83,74,183);
-  doc.text('Rekap Laporan Mengaji — Admin', 14, 17);
-  doc.setFontSize(9); doc.setTextColor(95,94,90);
-  doc.text(`Periode: ${namabulan}`, 14, 25);
-  doc.text(`Dicetak: ${new Date().toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'})}`, 14, 31);
-  doc.setDrawColor(200); doc.line(14,35,196,35);
+  // build array of all dates in range
+  const dates = [];
+  const cur = new Date(dari + 'T00:00:00');
+  const end = new Date(sampai + 'T00:00:00');
+  while (cur <= end) {
+    dates.push(cur.toISOString().split('T')[0]);
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  if (dates.length > 62) { alert('Rentang maksimal 62 hari agar muat di PDF.'); return; }
 
   const guruList = Object.entries(localUsers).sort((a,b) => a[1].nama.localeCompare(b[1].nama));
 
-  let y2 = 43;
-  guruList.forEach(([uid, u]) => {
-    const bData = getGuruData(u).filter(d => d.tanggal.startsWith(bulan)).sort((a,b)=>a.tanggal.localeCompare(b.tanggal));
-    const jMengaji = bData.filter(d=>!d.halangan).length;
-    const jHalangan = bData.filter(d=>d.halangan).length;
-    if (y2 > 260) { doc.addPage(); y2 = 14; }
-    doc.setFontSize(10); doc.setTextColor(83,74,183);
-    doc.text(`${u.nama}  (@${uid})`, 14, y2);
-    doc.setFontSize(8); doc.setTextColor(136,135,128);
-    doc.text(`Mengaji: ${jMengaji} hari   Halangan: ${jHalangan} hari   Total: ${bData.length} laporan`, 14, y2+5);
-    y2 += 11;
-    if (!bData.length) {
-      doc.setFontSize(8); doc.setTextColor(180,180,175);
-      doc.text('Belum ada laporan bulan ini.', 18, y2); y2 += 8;
-    } else {
-      doc.setFontSize(7.5); doc.setTextColor(136,135,128);
-      doc.text('Tanggal', 18, y2); doc.text('Surah', 60, y2); doc.text('Status', 160, y2);
-      doc.setDrawColor(220); doc.line(14,y2+2,196,y2+2); y2+=7;
-      doc.setTextColor(44,44,42);
-      bData.forEach(d => {
-        if (y2 > 275) { doc.addPage(); y2=14; }
-        doc.text(fmtTgl(d.tanggal), 18, y2);
-        doc.text((d.halangan?'-':d.surah).substring(0,42), 60, y2);
-        doc.text(d.halangan?'Halangan':'Mengaji', 160, y2);
-        y2 += 6.5;
-      });
+  // format label periode
+  const fmtD = (s) => new Date(s+'T00:00:00').toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'});
+  const periodeLabel = dari === sampai ? fmtD(dari) : `${fmtD(dari)} – ${fmtD(sampai)}`;
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const PW = 277;
+
+  // ---- HEADER ----
+  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.setTextColor(40,40,40);
+  doc.text('Rekap Update Mengaji', PW/2 + 14, 13, {align:'center'});
+  doc.setFontSize(10); doc.setFont('helvetica','normal');
+  doc.text('Staff, Guru, dan Karyawan', PW/2 + 14, 19, {align:'center'});
+  doc.text('SMP Muhammadiyah 7 Surabaya', PW/2 + 14, 25, {align:'center'});
+  doc.setFontSize(9);
+  doc.text(`Periode : ${periodeLabel}`, 14, 32);
+
+  // ---- TABLE DIMENSIONS ----
+  const colNo   = 8;
+  const colNama = 50;
+  const colJml  = 11;
+  const usableW = PW - colNo - colNama - colJml;
+  const colD    = Math.max(4, Math.min(7.5, usableW / dates.length));
+  const rowH    = 7;
+  const hdrY    = 36;
+  const tableX  = 14;
+  const PH_USE  = 195;
+
+  // helper: rect + centered or left text
+  function cell(x, y, w, h, text, opts={}) {
+    doc.setDrawColor(180); doc.setLineWidth(0.15);
+    doc.rect(x, y, w, h);
+    if (text !== null && text !== undefined) {
+      doc.setFontSize(opts.fs || 7);
+      doc.setFont('helvetica', opts.bold ? 'bold' : 'normal');
+      doc.setTextColor(...(opts.color || [40,40,40]));
+      const tx = opts.center ? x + w/2 : x + 1.8;
+      doc.text(String(text), tx, y + h/2 + 2.1, { align: opts.center ? 'center' : 'left', maxWidth: w - 2.5 });
     }
-    doc.setDrawColor(235); doc.line(14,y2+1,196,y2+1); y2+=6;
+  }
+
+  // group dates by month for the merged month header
+  const monthGroups = [];
+  dates.forEach(d => {
+    const label = new Date(d+'T00:00:00').toLocaleDateString('id-ID',{month:'short',year:'2-digit'});
+    if (!monthGroups.length || monthGroups[monthGroups.length-1].label !== label)
+      monthGroups.push({ label, count: 1 });
+    else monthGroups[monthGroups.length-1].count++;
   });
 
-  let totalMengaji=0, totalHalangan=0;
-  guruList.forEach(([,u]) => {
-    const bd = getGuruData(u).filter(d=>d.tanggal.startsWith(bulan));
-    totalMengaji += bd.filter(d=>!d.halangan).length;
-    totalHalangan += bd.filter(d=>d.halangan).length;
+  // ---- HEADER ROW 1: No | Nama | [Month groups] | Jml ----
+  let cx = tableX;
+  cell(cx, hdrY, colNo, rowH*3, 'No.', {bold:true, center:true, fs:7.5});   cx += colNo;
+  cell(cx, hdrY, colNama, rowH*3, 'Nama', {bold:true, center:true, fs:7.5}); cx += colNama;
+  // month group headers (row 1, span 1 row height)
+  let mx = cx;
+  monthGroups.forEach(mg => {
+    cell(mx, hdrY, mg.count * colD, rowH, mg.label, {bold:true, center:true, fs:6.5});
+    mx += mg.count * colD;
   });
-  if (y2 > 268) { doc.addPage(); y2=14; }
-  doc.setFontSize(9); doc.setTextColor(83,74,183);
-  doc.text(`Ringkasan: ${guruList.length} guru  |  ${totalMengaji} hari mengaji  |  ${totalHalangan} hari halangan`, 14, y2+4);
-  doc.save(`rekap-mengaji-admin-${bulan}.pdf`);
+  // date numbers (row 2)
+  dates.forEach((d, i) => {
+    const day = parseInt(d.split('-')[2]);
+    cell(cx + i*colD, hdrY + rowH, colD, rowH, String(day), {bold:true, center:true, fs:6});
+  });
+  // day-of-week abbrev (row 3)
+  const dayNames = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+  dates.forEach((d, i) => {
+    const dow = new Date(d+'T00:00:00').getDay();
+    const isSun = dow === 0;
+    cell(cx + i*colD, hdrY + rowH*2, colD, rowH, dayNames[dow],
+      {bold:false, center:true, fs:5.5, color: isSun ? [200,50,50] : [100,100,100]});
+  });
+  cx += dates.length * colD;
+  cell(cx, hdrY, colJml, rowH*3, 'Jml', {bold:true, center:true, fs:7.5});
+
+  // ---- DATA ROWS ----
+  let rowY = hdrY + rowH * 3;
+  guruList.forEach(([uid, u], idx) => {
+    if (rowY + rowH > PH_USE) {
+      doc.addPage({ orientation:'landscape' });
+      rowY = 14;
+    }
+
+    const setoranSet = new Set(
+      getGuruData(u)
+        .filter(d => d.tanggal >= dari && d.tanggal <= sampai)
+        .map(d => d.tanggal)
+    );
+    const jml = setoranSet.size;
+
+    cx = tableX;
+    cell(cx, rowY, colNo, rowH, String(idx+1), {center:true, fs:7}); cx += colNo;
+    const namaText = u.nama.length > 30 ? u.nama.substring(0,29)+'.' : u.nama;
+    cell(cx, rowY, colNama, rowH, namaText, {fs:7}); cx += colNama;
+
+    dates.forEach((d, i) => {
+      cell(cx + i*colD, rowY, colD, rowH, null);
+      if (setoranSet.has(d)) {
+        const bx = cx + i*colD + colD/2;
+        const by = rowY + rowH/2;
+        doc.setDrawColor(29,158,117); doc.setLineWidth(0.65);
+        doc.line(bx-1.4, by+0.2, bx-0.3, by+1.5);
+        doc.line(bx-0.3, by+1.5, bx+1.8, by-1.3);
+        doc.setLineWidth(0.15); doc.setDrawColor(180);
+      }
+    });
+    cx += dates.length * colD;
+    cell(cx, rowY, colJml, rowH, String(jml),
+      {center:true, bold:true, fs:7, color: jml > 0 ? [29,158,117] : [40,40,40]});
+
+    rowY += rowH;
+  });
+
+  // ---- FOOTER ----
+  rowY += 4;
+  if (rowY > PH_USE) { doc.addPage({orientation:'landscape'}); rowY = 14; }
+  const totalSetoran = guruList.reduce((s,[,u]) =>
+    s + getGuruData(u).filter(d => d.tanggal >= dari && d.tanggal <= sampai).length, 0);
+  doc.setFontSize(7.5); doc.setTextColor(130,130,130); doc.setFont('helvetica','normal');
+  doc.text(`Total guru: ${guruList.length}   |   Total setoran: ${totalSetoran}   |   Dicetak: ${new Date().toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'})}`, 14, rowY);
+
+  const fn = `rekap-mengaji-${dari}-sd-${sampai}.pdf`;
+  doc.save(fn);
 }
 
 /* ======== TABS ======== */
