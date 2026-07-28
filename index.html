@@ -203,7 +203,7 @@ tr:hover td { background: #fafaf8; }
         <div class="form-row">
           <div class="form-col">
             <label>Tanggal</label>
-            <input type="date" id="inpTgl">
+            <input type="date" id="inpTgl" readonly style="pointer-events: none; background-color: #f5f5f5;">
           </div>
           <div class="form-col">
             <label>Surah yang Dibaca</label>
@@ -221,7 +221,7 @@ tr:hover td { background: #fafaf8; }
         <div class="success-msg" id="msgSimpan"></div>
       </div>
     </div>
-
+    
     <!-- RIWAYAT GURU -->
     <div id="tab-riwayat" style="display:none;">
       <div class="card">
@@ -421,6 +421,7 @@ function enterGuru() {
   document.getElementById('appPage').classList.add('active');
   document.getElementById('userBadge').textContent = localUsers[me]?.nama || me;
   document.getElementById('inpTgl').value = today();
+  startTglAutoSync();
   halanganOn = false; updateToggleUI();
   populateFilter(); renderDashboard();
   goTab('dashboard', document.querySelector('#appPage .nav-tab'));
@@ -449,6 +450,16 @@ async function saveData(data) {
 }
 
 function today() { return new Date().toISOString().split('T')[0]; }
+
+/* ======== AUTO SYNC TANGGAL (lewat tengah malam tanpa reload) ======== */
+let _tglSyncInterval = null;
+function startTglAutoSync() {
+  if (_tglSyncInterval) clearInterval(_tglSyncInterval);
+  _tglSyncInterval = setInterval(() => {
+    const inp = document.getElementById('inpTgl');
+    if (inp && inp.value !== today()) inp.value = today();
+  }, 30000); // cek tiap 30 detik
+}
 
 /* ======== TOGGLE ======== */
 function toggleHalangan() { halanganOn = !halanganOn; updateToggleUI(); }
