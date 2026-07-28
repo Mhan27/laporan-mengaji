@@ -102,6 +102,13 @@ tr:hover td { background: #fafaf8; }
 .badge-purple { background: var(--purple-light); color: var(--purple); }
 .btn-del { background: none; border: none; cursor: pointer; color: #ccc; font-size: 1rem; transition: color .2s; padding: 0 4px; }
 .btn-del:hover { color: var(--red); }
+.btn-edit { background: none; border: none; cursor: pointer; color: #ccc; font-size: 1rem; transition: color .2s; padding: 0 4px; }
+.btn-edit:hover { color: var(--green-dark); }
+.guru-list-actions { display: flex; align-items: center; gap: 2px; }
+.guru-edit-row { display: flex; align-items: center; gap: 8px; flex: 1; }
+.guru-edit-row input { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.88rem; }
+.guru-edit-row .btn-save { background: var(--green); color: #fff; border: none; border-radius: 6px; padding: 6px 10px; font-size: 0.8rem; cursor: pointer; }
+.guru-edit-row .btn-cancel { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 0.8rem; cursor: pointer; }
 
 /* ---- FILTER ---- */
 .filter-row { display: flex; align-items: center; gap: 8px; margin-bottom: 1rem; flex-wrap: wrap; }
@@ -323,7 +330,7 @@ tr:hover td { background: #fafaf8; }
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, set, get, remove, onValue, child }
+import { getDatabase, ref, set, get, update, remove, onValue, child }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -342,6 +349,7 @@ const ADMIN_USER = 'admin', ADMIN_PASS = 'admin123';
 const SES_KEY = 'mj_ses';
 let me = null, halanganOn = false;
 let localUsers = {};   // cache Firebase data in memory
+let editingUid = null; // uid guru yang sedang diedit di panel admin
 
 /* ======== LOADING OVERLAY ======== */
 function showLoading(msg='Memuat...') {
@@ -672,14 +680,62 @@ function renderKelolaGuru() {
   if (!guruList.length) { el.innerHTML='<div class="empty"><div class="icon">👥</div><p>Belum ada guru terdaftar.</p></div>'; return; }
   el.innerHTML = guruList.map(([uid,u]) => {
     const jData = getGuruData(u).length;
+    if (uid === editingUid) {
+      return `<div class="guru-list-item">
+        <div class="guru-edit-row">
+          <input type="text" id="editNama_${uid}" value="${u.nama.replace(/"/g,'&quot;')}" maxlength="60">
+          <button class="btn-save" onclick="simpanEditGuru('${uid}')">💾 Simpan</button>
+          <button class="btn-cancel" onclick="cancelEditGuru()">Batal</button>
+        </div>
+      </div>`;
+    }
     return `<div class="guru-list-item">
       <div>
         <div class="guru-list-name">${u.nama}</div>
         <div class="guru-list-user">@${uid} &nbsp;·&nbsp; ${jData} laporan</div>
       </div>
-      <button class="btn-del" onclick="hapusGuru('${uid}')" title="Hapus akun guru">🗑️</button>
+      <div class="guru-list-actions">
+        <button class="btn-edit" onclick="editGuru('${uid}')" title="Edit nama guru">✏️</button>
+        <button class="btn-del" onclick="hapusGuru('${uid}')" title="Hapus akun guru">🗑️</button>
+      </div>
     </div>`;
   }).join('');
+  if (editingUid && document.getElementById('editNama_'+editingUid)) {
+    const inp = document.getElementById('editNama_'+editingUid);
+    inp.focus(); inp.select();
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') simpanEditGuru(editingUid);
+      if (e.key === 'Escape') cancelEditGuru();
+    });
+  }
+}
+
+function editGuru(uid) {
+  editingUid = uid;
+  renderKelolaGuru();
+}
+
+function cancelEditGuru() {
+  editingUid = null;
+  renderKelolaGuru();
+}
+
+async function simpanEditGuru(uid) {
+  const inp = document.getElementById('editNama_'+uid);
+  const namaBaru = inp.value.trim();
+  if (!namaBaru) { alert('⚠️ Nama tidak boleh kosong.'); return; }
+  if (namaBaru === localUsers[uid].nama) { editingUid = null; renderKelolaGuru(); return; }
+
+  showLoading('Menyimpan perubahan...');
+  try {
+    await update(ref(db, `users/${uid}`), { nama: namaBaru });
+    localUsers[uid].nama = namaBaru;
+    editingUid = null;
+    renderKelolaGuru(); populateAdminFilter(); renderAdminRekap();
+  } catch(e) {
+    alert('⚠️ Gagal menyimpan. Cek koneksi internet.');
+  }
+  hideLoading();
 }
 
 async function hapusGuru(uid) {
@@ -876,6 +932,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.exportAdminPDF = exportAdminPDF;
   window.tambahGuru = tambahGuru;
   window.hapusGuru = hapusGuru;
+  window.editGuru = editGuru;
+  window.cancelEditGuru = cancelEditGuru;
+  window.simpanEditGuru = simpanEditGuru;
   window.renderKelolaGuru = renderKelolaGuru;
   window.toggleGuru = toggleGuru;
 
