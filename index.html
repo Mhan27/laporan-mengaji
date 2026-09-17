@@ -105,6 +105,12 @@ tr:hover td { background: #fafaf8; }
 .btn-edit { background: none; border: none; cursor: pointer; color: #ccc; font-size: 1rem; transition: color .2s; padding: 0 4px; }
 .btn-edit:hover { color: var(--green-dark); }
 .guru-list-actions { display: flex; align-items: center; gap: 2px; }
+.guru-tgl-perm { display: flex; align-items: center; gap: 6px; margin-right: 10px; }
+.guru-tgl-perm .lbl { font-size: 0.68rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap; }
+.toggle-box-sm { width: 34px; height: 19px; border-radius: 10px; background: var(--gray-light); border: 1.5px solid var(--border); cursor: pointer; position: relative; transition: background .25s, border-color .25s; flex-shrink: 0; }
+.toggle-box-sm.on { background: var(--green); border-color: var(--green); }
+.toggle-knob-sm { width: 14px; height: 14px; background: var(--white); border-radius: 50%; position: absolute; top: 1.5px; left: 1.5px; transition: transform .2s; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+.toggle-box-sm.on .toggle-knob-sm { transform: translateX(15px); }
 .guru-edit-row { display: flex; align-items: center; gap: 8px; flex: 1; }
 .guru-edit-row input { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.88rem; }
 .guru-edit-row .btn-save { background: var(--green); color: #fff; border: none; border-radius: 6px; padding: 6px 10px; font-size: 0.8rem; cursor: pointer; }
@@ -428,8 +434,7 @@ function enterGuru() {
   document.getElementById('adminPage').classList.remove('active');
   document.getElementById('appPage').classList.add('active');
   document.getElementById('userBadge').textContent = localUsers[me]?.nama || me;
-  document.getElementById('inpTgl').value = today();
-  startTglAutoSync();
+  applyTglMode();
   halanganOn = false; updateToggleUI();
   populateFilter(); renderDashboard();
   goTab('dashboard', document.querySelector('#appPage .nav-tab'));
@@ -459,14 +464,33 @@ async function saveData(data) {
 
 function today() { return new Date().toISOString().split('T')[0]; }
 
-/* ======== AUTO SYNC TANGGAL (lewat tengah malam tanpa reload) ======== */
+/* ======== MODE TANGGAL (otomatis vs bisa dipilih manual, diatur admin) ======== */
 let _tglSyncInterval = null;
 function startTglAutoSync() {
   if (_tglSyncInterval) clearInterval(_tglSyncInterval);
   _tglSyncInterval = setInterval(() => {
     const inp = document.getElementById('inpTgl');
-    if (inp && inp.value !== today()) inp.value = today();
+    if (inp && inp.hasAttribute('readonly') && inp.value !== today()) inp.value = today();
   }, 30000); // cek tiap 30 detik
+}
+function stopTglAutoSync() {
+  if (_tglSyncInterval) { clearInterval(_tglSyncInterval); _tglSyncInterval = null; }
+}
+function applyTglMode() {
+  const inp = document.getElementById('inpTgl');
+  const izin = !!(localUsers[me]?.izinPilihTanggal);
+  inp.value = today();
+  if (izin) {
+    inp.removeAttribute('readonly');
+    inp.style.pointerEvents = 'auto';
+    inp.style.backgroundColor = '';
+    stopTglAutoSync();
+  } else {
+    inp.setAttribute('readonly', 'readonly');
+    inp.style.pointerEvents = 'none';
+    inp.style.backgroundColor = '#f5f5f5';
+    startTglAutoSync();
+  }
 }
 
 /* ======== TOGGLE ======== */
@@ -496,7 +520,7 @@ async function simpan() {
   msg.style.color='var(--green)'; msg.textContent='✅ Laporan tersimpan!';
   document.getElementById('inpSurah').value = '';
   halanganOn = false; updateToggleUI();
-  document.getElementById('inpTgl').value = today();
+  applyTglMode();
   setTimeout(() => msg.textContent = '', 2500);
   renderDashboard();
 }
@@ -659,7 +683,7 @@ async function tambahGuru() {
 
   showLoading('Menambahkan guru...');
   try {
-    const newGuru = { nama, password: p, data: [], role: 'guru' };
+    const newGuru = { nama, password: p, data: [], role: 'guru', izinPilihTanggal: false };
     await set(ref(db, `users/${u}`), newGuru);
     localUsers[u] = newGuru;
     msg.style.color='var(--green)'; msg.textContent=`✅ Akun "${nama}" berhasil ditambahkan.`;
@@ -695,6 +719,10 @@ function renderKelolaGuru() {
         <div class="guru-list-user">@${uid} &nbsp;·&nbsp; ${jData} laporan</div>
       </div>
       <div class="guru-list-actions">
+        <div class="guru-tgl-perm" title="Izinkan guru ini memilih tanggal laporan secara manual">
+          <span class="lbl">Pilih Tgl</span>
+          <div class="toggle-box-sm ${u.izinPilihTanggal ? 'on' : ''}" onclick="toggleIzinTanggal('${uid}')"><div class="toggle-knob-sm"></div></div>
+        </div>
         <button class="btn-edit" onclick="editGuru('${uid}')" title="Edit nama guru">✏️</button>
         <button class="btn-del" onclick="hapusGuru('${uid}')" title="Hapus akun guru">🗑️</button>
       </div>
@@ -746,6 +774,19 @@ async function hapusGuru(uid) {
     delete localUsers[uid];
     renderKelolaGuru(); populateAdminFilter(); renderAdminRekap();
   } catch(e) { alert('Gagal menghapus. Cek koneksi internet.'); }
+  hideLoading();
+}
+
+async function toggleIzinTanggal(uid) {
+  const next = !localUsers[uid].izinPilihTanggal;
+  showLoading('Menyimpan...');
+  try {
+    await update(ref(db, `users/${uid}`), { izinPilihTanggal: next });
+    localUsers[uid].izinPilihTanggal = next;
+    renderKelolaGuru();
+  } catch(e) {
+    alert('⚠️ Gagal menyimpan. Cek koneksi internet.');
+  }
   hideLoading();
 }
 
@@ -935,6 +976,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.editGuru = editGuru;
   window.cancelEditGuru = cancelEditGuru;
   window.simpanEditGuru = simpanEditGuru;
+  window.toggleIzinTanggal = toggleIzinTanggal;
   window.renderKelolaGuru = renderKelolaGuru;
   window.toggleGuru = toggleGuru;
 
